@@ -109,7 +109,7 @@ def generate_answer(audio_recording):
     st.success("Medical consultation done")
 
 
-if _name_ == "_main_":
+if __name__ == "__main__":
     # Remove the hamburger in the upper right-hand corner and the Made with Streamlit footer
     hide_menu_style = """
         <style>
