@@ -14,7 +14,7 @@ NEW_MODEL_API_URL = "https://api-inference.huggingface.co/models/shanover/medbot
 NEW_MODEL_INFO = {"name": "New Model", "api_url": NEW_MODEL_API_URL}
 DIAGNOSTIC_MODELS = [NEW_MODEL_INFO]
 
-headers = {"Authorization": "Bearer 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"}
+headers = {"Authorization": "Bearer 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"}
 
 
 def recognize_speech(audio_file):
