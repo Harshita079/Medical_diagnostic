@@ -65,15 +65,15 @@ def format_diagnostic_results(results, model_name):
     # Sort the results based on the score in descending order
     sorted_results = sorted(results, key=lambda x: x['score'], reverse=True)
 
-    # Extract the names and scores of the top results
+    # Extract the names of the top results
     top_results = sorted_results[:2]
-    formatted_results = [(result['label'], result['score']) for result in top_results]
+    formatted_results = [result['label'] for result in top_results]
 
     if not formatted_results:
         return 'No diagnostic information available'
 
-    # Create a string with disease names and confidence scores
-    formatted_results_str = ', '.join([f'{label} ({score:.2%})' for label, score in formatted_results])
+    # Create a string with disease names
+    formatted_results_str = ', '.join(formatted_results)
 
     return f'Top Diseases or Symptoms from {model_name}:\n{formatted_results_str}'
 
