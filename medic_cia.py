@@ -140,6 +140,6 @@ if __name__ == "__main__":
 
     if audio:
         generate_answer(audio)
+    for i, chat in enumerate(st.session_state.history):  
+        st_message(**chat, key=f"message_{i}")  # Utilize a prefix along with index for uniqueness
 
-        for i, chat in enumerate(st.session_state.history):  # Show historical consultation
-            st_message(**chat, key=str(i))
