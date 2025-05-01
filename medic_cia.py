@@ -1,4 +1,4 @@
-from streamlit_webrtc import webrtc_streamer, AudioProcessorBase, ClientSettings
+from streamlit_webrtc import webrtc_streamer, AudioProcessorBase
 import av
 import numpy as np
 import wave
@@ -55,7 +55,7 @@ webrtc_ctx = webrtc_streamer(
     key="audio",
     mode="sendonly",
     audio_receiver_size=1024,
-    client_settings=ClientSettings(media_stream_constraints={"audio": True, "video": False}),
+    media_stream_constraints={"audio": True, "video": False},
     audio_processor_factory=AudioRecorder,
 )
 
