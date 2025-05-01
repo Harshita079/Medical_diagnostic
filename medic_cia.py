@@ -45,17 +45,22 @@ try:
     # Display success message if imports work
     st.success("✅ WebRTC successfully loaded!")
     
-    # Audio processor class
-    class AudioRecorder(AudioProcessorBase):
+    # Audio processor class - fixed to handle the 'name' attribute issue
+    class AudioProcessor(AudioProcessorBase):
         def __init__(self):
             self.frames = []
-            logger.info("AudioRecorder initialized")
+            logger.info("AudioProcessor initialized")
         
-        def recv(self, frame: av.AudioFrame):
+        def recv(self, frame):
             try:
-                audio = frame.to_ndarray()
-                self.frames.append(audio)
-                return av.AudioFrame.from_ndarray(audio, layout="mono")
+                # Handle the frame correctly regardless of its type
+                if hasattr(frame, 'to_ndarray'):
+                    audio = frame.to_ndarray()
+                    self.frames.append(audio)
+                    return av.AudioFrame.from_ndarray(audio, layout="mono")
+                else:
+                    logger.warning(f"Received unexpected frame type: {type(frame)}")
+                    return frame
             except Exception as e:
                 logger.error(f"Error in recv: {str(e)}")
                 return frame
@@ -78,16 +83,13 @@ try:
                 logger.error(f"Error saving audio: {str(e)}")
                 return False
     
-    # Define the WebRTC streamer
+    # Define the WebRTC streamer with simpler configuration
     webrtc_ctx = webrtc_streamer(
-        key="audio",
+        key="audio_only",
         mode="sendonly",
         audio_receiver_size=1024,
-        media_stream_constraints={"audio": True, "video": False},
-        audio_processor_factory=lambda: AudioRecorder(),
-        rtc_configuration={
-            "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
-        },
+        media_stream_constraints={"audio": True},
+        audio_processor_factory=AudioProcessor,
     )
     
     # Process audio with WebRTC
@@ -132,7 +134,7 @@ try:
                     st.session_state.history.append({"message": result, "is_user": False})
                 else:
                     st.warning("⚠️ No audio captured yet. Try speaking into the mic.")
-
+                    
 except Exception as e:
     st.error(f"⚠️ WebRTC error: {str(e)}")
     st.info("Falling back to text input mode")
