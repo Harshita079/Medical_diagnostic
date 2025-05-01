@@ -56,8 +56,9 @@ webrtc_ctx = webrtc_streamer(
     mode="sendonly",
     audio_receiver_size=1024,
     media_stream_constraints={"audio": True, "video": False},
-    audio_processor_factory=AudioRecorder,
+    audio_processor_factory=lambda: AudioRecorder(),
 )
+
 
 # History management
 if "history" not in st.session_state:
