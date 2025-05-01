@@ -5,11 +5,15 @@ import wave
 import streamlit as st
 import requests
 import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Hugging Face API settings
 API_URL_RECOGNITION = "https://api-inference.huggingface.co/models/jonatasgrosman/wav2vec2-large-xlsr-53-english"
 DIAGNOSTIC_MODEL_API = "https://api-inference.huggingface.co/models/shanover/medbot_godel_v3"
-headers = {"Authorization": "Bearer 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"}  # <-- Replace with your Hugging Face token
+headers = {"Authorization": f"Bearer {os.getenv('HUGGINGFACE_API_KEY')}"}
 
 # Audio processor class to capture and save audio
 class AudioRecorder(AudioProcessorBase):
@@ -49,7 +53,18 @@ def diagnose(text):
         return "Diagnosis failed."
 
 # Streamlit App UI
+st.set_page_config(
+    page_title="Voice-Based Medical Diagnosis",
+    page_icon="🩺",
+    layout="wide"
+)
+
 st.title("🩺 Voice-Based Medical Diagnosis")
+
+# Check for API key
+if not os.getenv('HUGGINGFACE_API_KEY'):
+    st.error("⚠️ Please set your HUGGINGFACE_API_KEY in the Streamlit Cloud secrets.")
+    st.stop()
 
 webrtc_ctx = webrtc_streamer(
     key="audio",
