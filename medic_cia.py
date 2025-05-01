@@ -13,6 +13,7 @@ NEW_MODEL_API_URL = "https://api-inference.huggingface.co/models/shanover/medbot
 NEW_MODEL_INFO = {"name": "New Model", "api_url": NEW_MODEL_API_URL}
 DIAGNOSTIC_MODELS = [NEW_MODEL_INFO]
 
+# Replace with your actual Hugging Face API token
 headers = {"Authorization": "Bearer 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"}
 
 
@@ -54,62 +55,49 @@ def diagnostic_medic(voice_text):
     if not model_results:
         return 'No diagnostic information available'
 
-    # Compare results based on confidentiality score and choose the model with the highest score
     best_model_result = max(model_results, key=lambda x: max([result['score'] for result in x['results']], default=0.0))
 
     return format_diagnostic_results(best_model_result["results"], best_model_result["name"])
 
 
 def format_diagnostic_results(results, model_name):
-    # Sort the results based on the score in descending order
     sorted_results = sorted(results, key=lambda x: x['score'], reverse=True)
-
-    # Extract the names of the top results
     top_results = sorted_results[:2]
     formatted_results = [result['label'] for result in top_results]
 
     if not formatted_results:
         return 'No diagnostic information available'
 
-    # Create a string with disease names
     formatted_results_str = ', '.join(formatted_results)
-
     return f'Top Diseases or Symptoms from {model_name}:\n{formatted_results_str}'
 
 
 def generate_answer(audio_recording):
-    st.spinner("Consultation in progress...")
+    with st.spinner("Consultation in progress..."):
+        audio_recording.export("audio.wav", format="wav")
 
-    # To save audio to a file:
-    audio_recording.export("audio.wav", format="wav")
+        st.write("Audio file saved. Starting speech recognition...")
+        text = recognize_speech("audio.wav")
 
-    # Voice recognition model
-    st.write("Audio file saved. Starting speech recognition...")
-    text = recognize_speech("audio.wav")
+        if "recognition failed" in text.lower():
+            st.error("Voice recognition failed. Please try again.")
+            return
 
-    if "recognition failed" in text.lower():
-        st.error("Voice recognition failed. Please try again.")
-        return
+        st.write(f"Speech recognition result: {text}")
 
-    st.write(f"Speech recognition result: {text}")
+        st.write("Calling diagnostic models...")
+        diagnostic = diagnostic_medic(text)
+        st.write(f"Diagnostic result:\n{diagnostic}")
 
-    # Disease Prediction Model
-    st.write("Calling diagnostic models...")
-    diagnostic = diagnostic_medic(text)
-    st.write(f"Diagnostic result:\n{diagnostic}")
+        st.write("Please provide more detailed symptoms for precise recognition.")
 
-    # Add the statement for more detailed symptoms
-    st.write("Please provide more detailed symptoms for precise recognition.")
+        st.session_state.history.append({"message": text, "is_user": True})
+        st.session_state.history.append({"message": diagnostic, "is_user": False})
 
-    # Save conversation
-    st.session_state.history.append({"message": text, "is_user": True})
-    st.session_state.history.append({"message": diagnostic, "is_user": False})
-
-    st.success("Medical consultation done")
+        st.success("Medical consultation done")
 
 
 if __name__ == "__main__":
-    # Remove the hamburger in the upper right-hand corner and the Made with Streamlit footer
     hide_menu_style = """
         <style>
         #MainMenu {visibility: hidden;}
@@ -134,10 +122,9 @@ if __name__ == "__main__":
 
     st.title("Medical Diagnostic Assistant")
 
-    # Show Input
     audio = audiorecorder("Start recording", "Recording in progress...")
 
     if audio:
         generate_answer(audio)
-    for i, chat in enumerate(st.session_state.history):  
-        st_message(**chat, key=f"message_{i}")  # Utilize a prefix along with index for uniqueness
+    for i, chat in enumerate(st.session_state.history):
+        st_message(**chat, key=f"message_{i}")
