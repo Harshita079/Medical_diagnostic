@@ -4,13 +4,12 @@ import numpy as np
 import wave
 import streamlit as st
 import requests
-import time
 import os
 
 # Hugging Face API settings
 API_URL_RECOGNITION = "https://api-inference.huggingface.co/models/jonatasgrosman/wav2vec2-large-xlsr-53-english"
 DIAGNOSTIC_MODEL_API = "https://api-inference.huggingface.co/models/shanover/medbot_godel_v3"
-headers = {"Authorization": "Bearer YOUR_HF_TOKEN"}
+headers = {"Authorization": "Bearer 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"}  # <-- Replace with your Hugging Face token
 
 # Audio processor class to capture and save audio
 class AudioRecorder(AudioProcessorBase):
@@ -20,8 +19,7 @@ class AudioRecorder(AudioProcessorBase):
     def recv(self, frame: av.AudioFrame):
         audio = frame.to_ndarray()
         self.frames.append(audio)
-        return av.AudioFrame.from_ndarray(audio, layout=frame.layout)
-
+        return av.AudioFrame.from_ndarray(audio, layout="mono")  # <-- Fixed: Explicit layout
 
     def save_wav(self, path="audio.wav"):
         if not self.frames:
@@ -50,6 +48,7 @@ def diagnose(text):
     except:
         return "Diagnosis failed."
 
+# Streamlit App UI
 st.title("🩺 Voice-Based Medical Diagnosis")
 
 webrtc_ctx = webrtc_streamer(
@@ -60,6 +59,7 @@ webrtc_ctx = webrtc_streamer(
     audio_processor_factory=AudioRecorder,
 )
 
+# History management
 if "history" not in st.session_state:
     st.session_state.history = []
 
@@ -67,15 +67,16 @@ if webrtc_ctx.audio_processor:
     if st.button("📝 Analyze"):
         saved = webrtc_ctx.audio_processor.save_wav()
         if saved:
-            st.success("Audio recorded.")
+            st.success("✅ Audio recorded successfully.")
             text = recognize_speech("audio.wav")
-            st.write(f"🗣 You said: {text}")
+            st.write(f"🗣 You said: `{text}`")
             result = diagnose(text)
             st.success(f"🧠 Diagnosis: {result}")
             st.session_state.history.append({"message": text, "is_user": True})
             st.session_state.history.append({"message": result, "is_user": False})
         else:
-            st.warning("No audio captured yet.")
+            st.warning("⚠️ No audio captured yet. Try speaking into the mic.")
 
-for i, chat in enumerate(st.session_state.history):
+# Display chat history
+for chat in st.session_state.history:
     st.write(f"{'👤' if chat['is_user'] else '🤖'}: {chat['message']}")
