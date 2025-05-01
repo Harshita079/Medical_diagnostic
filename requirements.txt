@@ -1,15 +1,16 @@
-streamlit
+streamlit==1.32.0
 streamlit_chat
 sounddevice
 cython
-streamlit-webrtc
-requests
-av
-numpy
-pydub
+streamlit-webrtc==0.48.0
+requests==2.31.0
+av==10.0.0
+numpy==1.24.3
+pydub==0.25.1
 
-sentencepiece
-soundfile
+sentencepiece==0.1.99
+soundfile==0.12.1
 streamlit-audiorecorder
-ffmpeg-python
+ffmpeg-python==0.2.0
 SpeechRecognition==3.8.1
+python-dotenv==1.0.0
