@@ -1,130 +1,164 @@
-from pydub import AudioSegment
+import numpy as np
 import streamlit as st
-from streamlit_chat import message as st_message
-from audiorecorder import audiorecorder
-import json
-import time
+import requests
+import os
+import logging
+from dotenv import load_dotenv
 
-# Updated API details
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Load environment variables
+load_dotenv()
+
+# Set page config first (must be at the top)
+st.set_page_config(
+    page_title="Voice-Based Medical Diagnosis",
+    page_icon="🩺",
+    layout="wide"
+)
+
+# Hugging Face API settings
 API_URL_RECOGNITION = "https://api-inference.huggingface.co/models/jonatasgrosman/wav2vec2-large-xlsr-53-english"
+DIAGNOSTIC_MODEL_API = "https://api-inference.huggingface.co/models/shanover/medbot_godel_v3"
+api_key = os.getenv('HUGGINGFACE_API_KEY')
+headers = {"Authorization": f"Bearer {api_key}"}
 
-# New model API details
-NEW_MODEL_API_URL = "https://api-inference.huggingface.co/models/shanover/medbot_godel_v3"
-NEW_MODEL_INFO = {"name": "New Model", "api_url": NEW_MODEL_API_URL}
-DIAGNOSTIC_MODELS = [NEW_MODEL_INFO]
+# Check for API key
+if not api_key:
+    st.error("⚠️ Please set your HUGGINGFACE_API_KEY in the Streamlit Cloud secrets.")
+    st.stop()
 
-# Replace with your actual Hugging Face API token
-headers = {"Authorization": "Bearer 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"}
+st.title("🩺 Voice-Based Medical Diagnosis")
 
+# History management (set up early)
+if "history" not in st.session_state:
+    st.session_state.history = []
 
-def recognize_speech(audio_file):
-    with open(audio_file, "rb") as f:
-        data = f.read()
+try:
+    # Import WebRTC components
+    from streamlit_webrtc import webrtc_streamer, AudioProcessorBase
+    import av
+    import wave
+    
+    # Display success message if imports work
+    st.success("✅ WebRTC successfully loaded!")
+    
+    # Audio processor class
+    class AudioRecorder(AudioProcessorBase):
+        def __init__(self):
+            self.frames = []
+            logger.info("AudioRecorder initialized")
+        
+        def recv(self, frame: av.AudioFrame):
+            try:
+                audio = frame.to_ndarray()
+                self.frames.append(audio)
+                return av.AudioFrame.from_ndarray(audio, layout="mono")
+            except Exception as e:
+                logger.error(f"Error in recv: {str(e)}")
+                return frame
+        
+        def save_wav(self, path="audio.wav"):
+            try:
+                if not self.frames:
+                    logger.warning("No frames captured")
+                    return False
+                audio_data = np.concatenate(self.frames)
+                wf = wave.open(path, 'wb')
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(48000)
+                wf.writeframes(audio_data.tobytes())
+                wf.close()
+                logger.info(f"Audio saved to {path}")
+                return True
+            except Exception as e:
+                logger.error(f"Error saving audio: {str(e)}")
+                return False
+    
+    # Define the WebRTC streamer
+    webrtc_ctx = webrtc_streamer(
+        key="audio",
+        mode="sendonly",
+        audio_receiver_size=1024,
+        media_stream_constraints={"audio": True, "video": False},
+        audio_processor_factory=lambda: AudioRecorder(),
+        rtc_configuration={
+            "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
+        },
+    )
+    
+    # Process audio with WebRTC
+    if webrtc_ctx.audio_processor:
+        if st.button("📝 Analyze", key="webrtc_analyze"):
+            with st.spinner("Processing audio..."):
+                saved = webrtc_ctx.audio_processor.save_wav()
+                if saved:
+                    st.success("✅ Audio recorded successfully.")
+                    
+                    # Speech recognition
+                    with open("audio.wav", "rb") as f:
+                        data = f.read()
+                    
+                    response = requests.post(API_URL_RECOGNITION, headers=headers, data=data)
+                    if response.status_code != 200:
+                        st.error(f"API error: {response.status_code}")
+                        st.text(response.text)
+                        text = "Speech recognition failed"
+                    else:
+                        text = response.json().get("text", "Speech recognition failed")
+                    
+                    st.write(f"🗣 You said: `{text}`")
+                    
+                    # Diagnosis
+                    response = requests.post(
+                        DIAGNOSTIC_MODEL_API, 
+                        headers=headers, 
+                        json={"inputs": [text]}
+                    )
+                    
+                    try:
+                        result = response.json()[0]['generated_text']
+                    except Exception as e:
+                        logger.error(f"Error in diagnosis: {str(e)}")
+                        result = "Diagnosis failed."
+                    
+                    st.success(f"🧠 Diagnosis: {result}")
+                    
+                    # Update history
+                    st.session_state.history.append({"message": text, "is_user": True})
+                    st.session_state.history.append({"message": result, "is_user": False})
+                else:
+                    st.warning("⚠️ No audio captured yet. Try speaking into the mic.")
 
-    response = requests.post(API_URL_RECOGNITION, headers=headers, data=data)
+except Exception as e:
+    st.error(f"⚠️ WebRTC error: {str(e)}")
+    st.info("Falling back to text input mode")
+    
+    # Text input as fallback
+    text_input = st.text_input("Type your symptoms here:")
+    
+    if text_input and st.button("Analyze Text"):
+        with st.spinner("Processing..."):
+            response = requests.post(
+                DIAGNOSTIC_MODEL_API, 
+                headers=headers, 
+                json={"inputs": [text_input]}
+            )
+            
+            try:
+                result = response.json()[0]['generated_text']
+                st.success(f"🧠 Diagnosis: {result}")
+                
+                # Update history
+                st.session_state.history.append({"message": text_input, "is_user": True})
+                st.session_state.history.append({"message": result, "is_user": False})
+            except Exception as e:
+                st.error(f"Diagnosis failed: {str(e)}")
 
-    if response.status_code == 503:  # HTTP 503 Service Unavailable
-        estimated_time = response.json().get('estimated_time', 20.0)
-        st.warning(
-            f"Model is currently loading. Please wait for approximately {estimated_time:.2f} seconds and try again.")
-        time.sleep(20)
-        return recognize_speech(audio_file)  # Retry after waiting
-
-    if response.status_code != 200:
-        st.error(f"Speech recognition API error: {response.content}")
-        return "Speech recognition failed"
-
-    output = response.json()
-    final_output = output.get('text', 'Speech recognition failed')
-    return final_output
-
-
-def diagnostic_medic(voice_text):
-    model_results = []
-
-    for model_info in DIAGNOSTIC_MODELS:
-        payload = {"inputs": [voice_text]}
-        response = requests.post(model_info["api_url"], headers=headers, json=payload)
-
-        try:
-            generated_text = response.json()[0]['generated_text']
-            model_results.append({"name": model_info["name"], "results": [{'label': generated_text, 'score': 1.0}]})
-        except (KeyError, IndexError):
-            st.warning(f'Diagnostic information not available for {model_info["name"]}')
-
-    if not model_results:
-        return 'No diagnostic information available'
-
-    best_model_result = max(model_results, key=lambda x: max([result['score'] for result in x['results']], default=0.0))
-
-    return format_diagnostic_results(best_model_result["results"], best_model_result["name"])
-
-
-def format_diagnostic_results(results, model_name):
-    sorted_results = sorted(results, key=lambda x: x['score'], reverse=True)
-    top_results = sorted_results[:2]
-    formatted_results = [result['label'] for result in top_results]
-
-    if not formatted_results:
-        return 'No diagnostic information available'
-
-    formatted_results_str = ', '.join(formatted_results)
-    return f'Top Diseases or Symptoms from {model_name}:\n{formatted_results_str}'
-
-
-def generate_answer(audio_recording):
-    with st.spinner("Consultation in progress..."):
-        audio_recording.export("audio.wav", format="wav")
-
-        st.write("Audio file saved. Starting speech recognition...")
-        text = recognize_speech("audio.wav")
-
-        if "recognition failed" in text.lower():
-            st.error("Voice recognition failed. Please try again.")
-            return
-
-        st.write(f"Speech recognition result: {text}")
-
-        st.write("Calling diagnostic models...")
-        diagnostic = diagnostic_medic(text)
-        st.write(f"Diagnostic result:\n{diagnostic}")
-
-        st.write("Please provide more detailed symptoms for precise recognition.")
-
-        st.session_state.history.append({"message": text, "is_user": True})
-        st.session_state.history.append({"message": diagnostic, "is_user": False})
-
-        st.success("Medical consultation done")
-
-
-if __name__ == "__main__":
-    hide_menu_style = """
-        <style>
-        #MainMenu {visibility: hidden;}
-        footer {visibility: hidden;}
-        </style>
-    """
-    st.markdown(hide_menu_style, unsafe_allow_html=True)
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        st.write(' ')
-
-    with col2:
-        st.image("./logo_.png", width=200)
-
-    with col3:
-        st.write(' ')
-
-    if "history" not in st.session_state:
-        st.session_state.history = []
-
-    st.title("Medical Diagnostic Assistant")
-
-    audio = audiorecorder("Start recording", "Recording in progress...")
-
-    if audio:
-        generate_answer(audio)
-    for i, chat in enumerate(st.session_state.history):
-        st_message(**chat, key=f"message_{i}")
+# Display chat history
+st.subheader("Consultation History")
+for chat in st.session_state.history:
+    st.write(f"{'👤' if chat['is_user'] else '🤖'}: {chat['message']}") 
