@@ -20,7 +20,8 @@ class AudioRecorder(AudioProcessorBase):
     def recv(self, frame: av.AudioFrame):
         audio = frame.to_ndarray()
         self.frames.append(audio)
-        return av.AudioFrame.from_ndarray(audio, layout=frame.layout.name)
+        return av.AudioFrame.from_ndarray(audio, layout=frame.layout)
+
 
     def save_wav(self, path="audio.wav"):
         if not self.frames:
