@@ -33,6 +33,12 @@ if not api_key:
 
 st.title("🩺 Voice-Based Medical Diagnosis")
 
+# Browser check warning
+import platform
+user_agent = st.experimental_get_query_params().get('user_agent', [''])[0]
+if 'Safari' in user_agent and 'Chrome' not in user_agent:
+    st.warning("⚠️ Safari has known issues with WebRTC. Please try Chrome or Firefox for better results.")
+
 # Add a debug expander
 with st.expander("Debug Information"):
     st.markdown("If you're experiencing issues, this section provides diagnostic information.")
@@ -65,7 +71,7 @@ if "frame_counter" not in st.session_state:
 
 try:
     # Import WebRTC components
-    from streamlit_webrtc import webrtc_streamer, AudioProcessorBase, WebRtcMode, RTCConfiguration
+    from streamlit_webrtc import webrtc_streamer, AudioProcessorBase, WebRtcMode, RTCConfiguration, MediaStreamConstraints
     import av
     import wave
     
@@ -107,10 +113,7 @@ try:
                     
                     # Debug audio levels to detect very quiet audio
                     audio_level = np.abs(audio).mean()
-                    if audio_level < 0.001:  # Very quiet audio
-                        logger.debug(f"Quiet audio detected: level={audio_level}")
-                    else:
-                        logger.debug(f"Audio level: {audio_level}")
+                    logger.debug(f"Audio level: {audio_level}, shape: {audio.shape}")
                     
                     # Store in instance and session state
                     self.frames.append(audio)
@@ -153,10 +156,14 @@ try:
                 # Save to file
                 audio.export("simple_audio.wav", format="wav")
                 st.audio(audio.export().read())
+                st.success("✅ Audio recorded successfully!")
                 
                 # Process with API
                 with open("simple_audio.wav", "rb") as f:
                     audio_bytes = f.read()
+                
+                file_size = len(audio_bytes) / 1024
+                st.info(f"Audio file size: {file_size:.2f} KB")
                 
                 if st.button("Process this recording"):
                     # Call API with the audio data
@@ -188,7 +195,7 @@ try:
             return audio
         except Exception as e:
             logger.error(f"Error in simple audio recorder: {str(e)}")
-            st.error("Unable to use the simple audio recorder. Please try the WebRTC version.")
+            st.error(f"Unable to use the simple audio recorder: {str(e)}")
             return None
     
     def save_audio_frames(frames, path="audio.wav"):
@@ -258,17 +265,40 @@ try:
         with col2:
             frames_info = st.empty()
         
-        # Define the WebRTC streamer with proper configuration for remote connections
+        # Show microphone test option
+        st.markdown("---")
+        mic_test_expander = st.expander("Test your microphone")
+        with mic_test_expander:
+            st.write("This will help check if your browser can access your microphone:")
+            if st.button("Test Microphone Access"):
+                st.components.v1.html("""
+                <script>
+                    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                        navigator.mediaDevices.getUserMedia({ audio: true })
+                            .then(function(stream) {
+                                document.getElementById('mic-status').innerHTML = 
+                                    '✅ Microphone access granted! Browser permissions are working correctly.';
+                                stream.getTracks().forEach(track => track.stop());
+                            })
+                            .catch(function(error) {
+                                document.getElementById('mic-status').innerHTML = 
+                                    '❌ Error accessing microphone: ' + error.message;
+                            });
+                    } else {
+                        document.getElementById('mic-status').innerHTML = 
+                            '❌ getUserMedia not supported in this browser. Try Chrome or Firefox.';
+                    }
+                </script>
+                <div id="mic-status">Testing microphone access...</div>
+                """, height=100)
+        
+        # Define the WebRTC streamer with simpler configuration first
         webrtc_ctx = webrtc_streamer(
             key="audio_only",
             mode=WebRtcMode.SENDONLY,
             audio_receiver_size=1024,
             media_stream_constraints={
-                "audio": {
-                    "echoCancellation": True,
-                    "noiseSuppression": True,
-                    "autoGainControl": True
-                }, 
+                "audio": True,  # Simplified to basic audio
                 "video": False
             },
             audio_processor_factory=AudioProcessor,
@@ -300,6 +330,15 @@ try:
                 2. Check if your microphone is working
                 3. Try a different browser (Chrome recommended)
                 """)
+                
+                # Try toggling the advanced settings if no frames after a few seconds
+                if time.time() % 10 < 5:  # Show this message half the time
+                    st.error("""
+                    If you're still not seeing any audio frames:
+                    1. Click STOP
+                    2. Try the Simple Recorder tab instead
+                    3. Or use the text input option
+                    """)
         else:
             if st.session_state.is_recording:  # Was recording but now stopped
                 status_placeholder.info("✅ Recording stopped. Click ANALYZE to process.")
