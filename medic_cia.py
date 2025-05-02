@@ -38,14 +38,14 @@ if "history" not in st.session_state:
 
 try:
     # Import WebRTC components
-    from streamlit_webrtc import webrtc_streamer, AudioProcessorBase
+    from streamlit_webrtc import webrtc_streamer, AudioProcessorBase, WebRtcMode
     import av
     import wave
     
     # Display success message if imports work
     st.success("✅ WebRTC successfully loaded!")
     
-    # Audio processor class - fixed to handle the 'name' attribute issue
+    # Audio processor class - improved to better handle string frames and name attribute issues
     class AudioProcessor(AudioProcessorBase):
         def __init__(self):
             self.frames = []
@@ -53,23 +53,50 @@ try:
         
         def recv(self, frame):
             try:
-                # Handle the frame correctly regardless of its type
-                if hasattr(frame, 'to_ndarray'):
+                # Check frame type more explicitly
+                if frame is None:
+                    logger.warning("Received None frame")
+                    return None
+                elif isinstance(frame, str):
+                    # This is what causes the 'str has no attribute name' error
+                    logger.warning(f"Received string instead of audio frame: {frame}")
+                    # Return empty audio frame instead of None
+                    empty_frame = av.AudioFrame.from_ndarray(
+                        np.zeros((1, 1), dtype=np.float32),
+                        layout="mono"
+                    )
+                    return empty_frame
+                elif hasattr(frame, 'to_ndarray'):
+                    # Normal case - convert frame to numpy array
                     audio = frame.to_ndarray()
                     self.frames.append(audio)
                     return av.AudioFrame.from_ndarray(audio, layout="mono")
                 else:
+                    # Any other unexpected type
                     logger.warning(f"Received unexpected frame type: {type(frame)}")
+                    # Return the frame as is to avoid errors
                     return frame
             except Exception as e:
                 logger.error(f"Error in recv: {str(e)}")
-                return frame
+                # Return empty frame on error instead of the original frame
+                empty_frame = av.AudioFrame.from_ndarray(
+                    np.zeros((1, 1), dtype=np.float32),
+                    layout="mono"
+                )
+                return empty_frame
         
         def save_wav(self, path="audio.wav"):
             try:
                 if not self.frames:
                     logger.warning("No frames captured")
                     return False
+                
+                # Add robustness: check if frames have consistent shapes
+                shapes = [frame.shape for frame in self.frames]
+                if len(set(str(s) for s in shapes)) > 1:
+                    logger.warning(f"Inconsistent frame shapes: {shapes}")
+                    # Filter out problematic frames or use a different approach
+                    
                 audio_data = np.concatenate(self.frames)
                 wf = wave.open(path, 'wb')
                 wf.setnchannels(1)
@@ -83,13 +110,17 @@ try:
                 logger.error(f"Error saving audio: {str(e)}")
                 return False
     
-    # Define the WebRTC streamer with simpler configuration
+    # Define the WebRTC streamer with proper configuration for remote connections
     webrtc_ctx = webrtc_streamer(
         key="audio_only",
-        mode="sendonly",
+        mode=WebRtcMode.SENDONLY,  # Use explicit enum value
         audio_receiver_size=1024,
-        media_stream_constraints={"audio": True},
+        media_stream_constraints={"audio": True, "video": False},  # Explicitly disable video
         audio_processor_factory=AudioProcessor,
+        rtc_configuration={
+            "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
+        },
+        async_processing=True,  # Add this for better performance
     )
     
     # Process audio with WebRTC
