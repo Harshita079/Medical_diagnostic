@@ -145,54 +145,94 @@ try:
     # Create a simple audio recorder option to fall back to simple audio recording
     def use_simple_audio_recorder():
         try:
-            from audiorecorder import AudioRecorder
-            st.subheader("Alternative Audio Recorder")
-            st.write("If WebRTC isn't working, try this simple recorder:")
-            
-            recorder = AudioRecorder(text="Click to record", recording_color="#e8b62c", neutral_color="#6aa36f")
-            audio = recorder()
-            
-            if len(audio) > 0:
-                # Save to file
-                audio.export("simple_audio.wav", format="wav")
-                st.audio(audio.export().read())
-                st.success("✅ Audio recorded successfully!")
+            # Try to import audiorecorder, but provide a more graceful fallback if it fails
+            try:
+                from audiorecorder import AudioRecorder
+                st.subheader("Alternative Audio Recorder")
+                st.write("If WebRTC isn't working, try this simple recorder:")
                 
-                # Process with API
-                with open("simple_audio.wav", "rb") as f:
-                    audio_bytes = f.read()
+                recorder = AudioRecorder(text="Click to record", recording_color="#e8b62c", neutral_color="#6aa36f")
+                audio = recorder()
                 
-                file_size = len(audio_bytes) / 1024
-                st.info(f"Audio file size: {file_size:.2f} KB")
-                
-                if st.button("Process this recording"):
-                    # Call API with the audio data
-                    with st.spinner("Processing audio..."):
-                        response = requests.post(API_URL_RECOGNITION, headers=headers, data=audio_bytes)
-                        if response.status_code == 200:
-                            text = response.json().get("text", "Speech recognition failed")
-                            st.success(f"You said: {text}")
-                            
-                            # Diagnosis
-                            response = requests.post(
-                                DIAGNOSTIC_MODEL_API, 
-                                headers=headers, 
-                                json={"inputs": [text]}
-                            )
-                            
-                            try:
-                                result = response.json()[0]['generated_text']
-                                st.success(f"🧠 Diagnosis: {result}")
+                if len(audio) > 0:
+                    # Save to file
+                    audio.export("simple_audio.wav", format="wav")
+                    st.audio(audio.export().read())
+                    st.success("✅ Audio recorded successfully!")
+                    
+                    # Process with API
+                    with open("simple_audio.wav", "rb") as f:
+                        audio_bytes = f.read()
+                    
+                    file_size = len(audio_bytes) / 1024
+                    st.info(f"Audio file size: {file_size:.2f} KB")
+                    
+                    if st.button("Process this recording"):
+                        # Call API with the audio data
+                        with st.spinner("Processing audio..."):
+                            response = requests.post(API_URL_RECOGNITION, headers=headers, data=audio_bytes)
+                            if response.status_code == 200:
+                                text = response.json().get("text", "Speech recognition failed")
+                                st.success(f"You said: {text}")
                                 
-                                # Update history
-                                st.session_state.history.append({"message": text, "is_user": True})
-                                st.session_state.history.append({"message": result, "is_user": False})
-                            except Exception as e:
-                                st.error(f"Diagnosis failed: {str(e)}")
-                        else:
-                            st.error(f"API error: {response.status_code}")
-                            st.text(response.text)
-            return audio
+                                # Diagnosis
+                                response = requests.post(
+                                    DIAGNOSTIC_MODEL_API, 
+                                    headers=headers, 
+                                    json={"inputs": [text]}
+                                )
+                                
+                                try:
+                                    result = response.json()[0]['generated_text']
+                                    st.success(f"🧠 Diagnosis: {result}")
+                                    
+                                    # Update history
+                                    st.session_state.history.append({"message": text, "is_user": True})
+                                    st.session_state.history.append({"message": result, "is_user": False})
+                                except Exception as e:
+                                    st.error(f"Diagnosis failed: {str(e)}")
+                            else:
+                                st.error(f"API error: {response.status_code}")
+                                st.text(response.text)
+                return audio
+            except ImportError:
+                # If audiorecorder package is not available
+                st.warning("The audiorecorder package is not available. Please try the text input method instead.")
+                st.info("You can upload an audio file manually if you have one:")
+                
+                uploaded_file = st.file_uploader("Upload audio file (WAV format)", type=["wav"])
+                if uploaded_file is not None:
+                    st.audio(uploaded_file)
+                    
+                    if st.button("Process uploaded audio"):
+                        with st.spinner("Processing audio..."):
+                            response = requests.post(API_URL_RECOGNITION, headers=headers, data=uploaded_file.getvalue())
+                            if response.status_code == 200:
+                                text = response.json().get("text", "Speech recognition failed")
+                                st.success(f"Recognized text: {text}")
+                                
+                                # Diagnosis
+                                response = requests.post(
+                                    DIAGNOSTIC_MODEL_API, 
+                                    headers=headers, 
+                                    json={"inputs": [text]}
+                                )
+                                
+                                try:
+                                    result = response.json()[0]['generated_text']
+                                    st.success(f"🧠 Diagnosis: {result}")
+                                    
+                                    # Update history
+                                    st.session_state.history.append({"message": text, "is_user": True})
+                                    st.session_state.history.append({"message": result, "is_user": False})
+                                except Exception as e:
+                                    st.error(f"Diagnosis failed: {str(e)}")
+                            else:
+                                st.error(f"API error: {response.status_code}")
+                                st.text(response.text)
+                
+                return None
+                
         except Exception as e:
             logger.error(f"Error in simple audio recorder: {str(e)}")
             st.error(f"Unable to use the simple audio recorder: {str(e)}")
