@@ -6,8 +6,8 @@ import logging
 import time
 from dotenv import load_dotenv
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
+# Enhanced logging for better debugging
+logging.basicConfig(level=logging.DEBUG)  # Change to DEBUG for more detailed logs
 logger = logging.getLogger(__name__)
 
 # Load environment variables
@@ -33,6 +33,16 @@ if not api_key:
 
 st.title("🩺 Voice-Based Medical Diagnosis")
 
+# Add a debug expander
+with st.expander("Debug Information"):
+    st.markdown("If you're experiencing issues, this section provides diagnostic information.")
+    st.markdown("### Troubleshooting Steps:")
+    st.markdown("1. Make sure your browser allows microphone access")
+    st.markdown("2. Try using Chrome or Firefox instead of Safari")
+    st.markdown("3. Ensure no other applications are using your microphone")
+    st.markdown("4. Speak clearly and loudly into your microphone")
+    debug_info = st.empty()
+
 # History management (set up early)
 if "history" not in st.session_state:
     st.session_state.history = []
@@ -48,17 +58,22 @@ if "is_recording" not in st.session_state:
 # Add flag for frames received
 if "frames_received" not in st.session_state:
     st.session_state.frames_received = False
+    
+# Add frame counter session state
+if "frame_counter" not in st.session_state:
+    st.session_state.frame_counter = 0
 
 try:
     # Import WebRTC components
-    from streamlit_webrtc import webrtc_streamer, AudioProcessorBase, WebRtcMode
+    from streamlit_webrtc import webrtc_streamer, AudioProcessorBase, WebRtcMode, RTCConfiguration
     import av
     import wave
     
     # Display success message if imports work
     st.success("✅ WebRTC successfully loaded!")
+    logger.info("WebRTC components successfully imported")
     
-    # Audio processor class - improved for better audio capturing
+    # Audio processor class - improved for better audio capturing and debugging
     class AudioProcessor(AudioProcessorBase):
         def __init__(self):
             self.frames = []
@@ -66,6 +81,10 @@ try:
             # Clear session state frames at initialization
             st.session_state.audio_frames = []
             st.session_state.frames_received = False
+            st.session_state.frame_counter = 0
+            
+            # Print debug info
+            logger.debug(f"Audio processor created at {time.time()}")
         
         def recv(self, frame):
             try:
@@ -85,13 +104,24 @@ try:
                 elif hasattr(frame, 'to_ndarray'):
                     # Normal case - convert frame to numpy array
                     audio = frame.to_ndarray()
+                    
+                    # Debug audio levels to detect very quiet audio
+                    audio_level = np.abs(audio).mean()
+                    if audio_level < 0.001:  # Very quiet audio
+                        logger.debug(f"Quiet audio detected: level={audio_level}")
+                    else:
+                        logger.debug(f"Audio level: {audio_level}")
+                    
                     # Store in instance and session state
                     self.frames.append(audio)
                     st.session_state.audio_frames.append(audio)
                     st.session_state.frames_received = True
+                    st.session_state.frame_counter += 1
+                    
                     # Visual feedback that frames are being received
                     if len(self.frames) % 10 == 0:
                         logger.info(f"Received {len(self.frames)} audio frames")
+                    
                     return av.AudioFrame.from_ndarray(audio, layout="mono")
                 else:
                     # Any other unexpected type
@@ -100,13 +130,67 @@ try:
                     return frame
             except Exception as e:
                 logger.error(f"Error in recv: {str(e)}")
+                import traceback
+                logger.error(traceback.format_exc())
                 # Return empty frame on error instead of the original frame
                 empty_frame = av.AudioFrame.from_ndarray(
                     np.zeros((1, 1), dtype=np.float32),
                     layout="mono"
                 )
                 return empty_frame
-        
+    
+    # Create a simple audio recorder option to fall back to simple audio recording
+    def use_simple_audio_recorder():
+        try:
+            from audiorecorder import AudioRecorder
+            st.subheader("Alternative Audio Recorder")
+            st.write("If WebRTC isn't working, try this simple recorder:")
+            
+            recorder = AudioRecorder(text="Click to record", recording_color="#e8b62c", neutral_color="#6aa36f")
+            audio = recorder()
+            
+            if len(audio) > 0:
+                # Save to file
+                audio.export("simple_audio.wav", format="wav")
+                st.audio(audio.export().read())
+                
+                # Process with API
+                with open("simple_audio.wav", "rb") as f:
+                    audio_bytes = f.read()
+                
+                if st.button("Process this recording"):
+                    # Call API with the audio data
+                    with st.spinner("Processing audio..."):
+                        response = requests.post(API_URL_RECOGNITION, headers=headers, data=audio_bytes)
+                        if response.status_code == 200:
+                            text = response.json().get("text", "Speech recognition failed")
+                            st.success(f"You said: {text}")
+                            
+                            # Diagnosis
+                            response = requests.post(
+                                DIAGNOSTIC_MODEL_API, 
+                                headers=headers, 
+                                json={"inputs": [text]}
+                            )
+                            
+                            try:
+                                result = response.json()[0]['generated_text']
+                                st.success(f"🧠 Diagnosis: {result}")
+                                
+                                # Update history
+                                st.session_state.history.append({"message": text, "is_user": True})
+                                st.session_state.history.append({"message": result, "is_user": False})
+                            except Exception as e:
+                                st.error(f"Diagnosis failed: {str(e)}")
+                        else:
+                            st.error(f"API error: {response.status_code}")
+                            st.text(response.text)
+            return audio
+        except Exception as e:
+            logger.error(f"Error in simple audio recorder: {str(e)}")
+            st.error("Unable to use the simple audio recorder. Please try the WebRTC version.")
+            return None
+    
     def save_audio_frames(frames, path="audio.wav"):
         """Helper function to save audio frames to a WAV file"""
         try:
@@ -118,6 +202,15 @@ try:
             shapes = [frame.shape for frame in frames]
             logger.info(f"Audio frame shapes: {shapes[:5]}... (total: {len(shapes)})")
             
+            # Check if frames contain actual audio (not just silence)
+            audio_levels = [np.abs(frame).mean() for frame in frames]
+            avg_level = sum(audio_levels) / len(audio_levels)
+            logger.info(f"Average audio level: {avg_level}")
+            
+            if avg_level < 0.001:
+                logger.warning(f"Very low audio levels detected: {avg_level}")
+                st.warning("Very quiet audio detected. Please speak louder or check your microphone.")
+            
             # Concatenate and save
             audio_data = np.concatenate(frames)
             wf = wave.open(path, 'wb')
@@ -126,21 +219,37 @@ try:
             wf.setframerate(48000)
             wf.writeframes(audio_data.tobytes())
             wf.close()
-            logger.info(f"Audio saved to {path} (size: {os.path.getsize(path)} bytes)")
+            
+            file_size = os.path.getsize(path)
+            logger.info(f"Audio saved to {path} (size: {file_size} bytes)")
+            
+            # Extra validation check
+            if file_size < 1000:  # Less than 1KB, probably empty or corrupted
+                logger.warning(f"Audio file too small ({file_size} bytes), might be empty")
+                if file_size == 0:
+                    return False
+            
             return True
         except Exception as e:
             logger.error(f"Error saving audio: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             return False
     
     # Create a tab layout for WebRTC and text input
-    tab1, tab2 = st.tabs(["🎤 Voice Recognition", "⌨️ Text Input"])
+    tab1, tab2, tab3 = st.tabs(["🎤 Voice Recognition", "🔊 Simple Recorder", "⌨️ Text Input"])
     
     with tab1:
         st.subheader("Talk to get a diagnosis")
-        st.write("1. Click START to begin recording")
-        st.write("2. Speak clearly about your symptoms")
-        st.write("3. Click STOP when finished")
-        st.write("4. Click ANALYZE to get a diagnosis")
+        st.markdown("""
+        ### Instructions:
+        1. Click **START** to begin recording
+        2. Speak clearly about your symptoms
+        3. Click **STOP** when finished
+        4. Click **ANALYZE** to get a diagnosis
+        
+        _If nothing happens, try the Simple Recorder in the next tab._
+        """)
         
         # Status indicators
         col1, col2 = st.columns(2)
@@ -154,27 +263,53 @@ try:
             key="audio_only",
             mode=WebRtcMode.SENDONLY,
             audio_receiver_size=1024,
-            media_stream_constraints={"audio": True, "video": False},
-            audio_processor_factory=AudioProcessor,
-            rtc_configuration={
-                "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
+            media_stream_constraints={
+                "audio": {
+                    "echoCancellation": True,
+                    "noiseSuppression": True,
+                    "autoGainControl": True
+                }, 
+                "video": False
             },
+            audio_processor_factory=AudioProcessor,
+            rtc_configuration=RTCConfiguration(
+                {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
+            ),
             async_processing=True,
         )
         
         # Update recording status based on webrtc_ctx state
-        if webrtc_ctx.state.playing:
+        if webrtc_ctx.state and webrtc_ctx.state.playing:
             status_placeholder.success("🔴 Recording...")
             st.session_state.is_recording = True
             # Show frames being received
-            if st.session_state.frames_received:
-                frames_info.info(f"Received {len(st.session_state.audio_frames)} audio frames")
+            current_frames = len(st.session_state.audio_frames)
+            if st.session_state.frames_received and current_frames > 0:
+                frames_info.info(f"Received {current_frames} audio frames")
+                # Update debug info
+                debug_info.info(f"""
+                - Frame count: {current_frames}
+                - Recording state: Active
+                - WebRTC state: {webrtc_ctx.state}
+                - Last frame time: {time.time()}
+                """)
             else:
-                frames_info.warning("No audio frames detected yet. Please speak louder or check your microphone.")
+                frames_info.warning("""
+                No audio frames detected yet. Please:
+                1. Speak louder
+                2. Check if your microphone is working
+                3. Try a different browser (Chrome recommended)
+                """)
         else:
             if st.session_state.is_recording:  # Was recording but now stopped
                 status_placeholder.info("✅ Recording stopped. Click ANALYZE to process.")
                 st.session_state.is_recording = False
+                # Update debug info with final frame count
+                debug_info.info(f"""
+                - Total frames captured: {len(st.session_state.audio_frames)}
+                - Recording state: Stopped
+                - WebRTC state: {webrtc_ctx.state if webrtc_ctx.state else 'Inactive'}
+                """)
             else:
                 status_placeholder.info("Click START to begin recording")
         
@@ -183,6 +318,10 @@ try:
             with st.spinner("Processing audio..."):
                 # Check if we have audio frames in the session state
                 if len(st.session_state.audio_frames) > 0:
+                    # Log frame information for debugging
+                    logger.info(f"Analyzing {len(st.session_state.audio_frames)} audio frames")
+                    logger.debug(f"First few frames shapes: {[f.shape for f in st.session_state.audio_frames[:3]]}")
+                    
                     # Save the audio from session state
                     saved = save_audio_frames(st.session_state.audio_frames)
                     
@@ -194,7 +333,12 @@ try:
                             data = f.read()
                         
                         # Show audio size for debugging
-                        st.info(f"Audio file size: {len(data) / 1024:.2f} KB")
+                        file_size = len(data) / 1024
+                        st.info(f"Audio file size: {file_size:.2f} KB")
+                        
+                        # Extra validation for very small files
+                        if file_size < 1.0:
+                            st.warning(f"Audio file very small ({file_size:.2f} KB), may contain no speech")
                         
                         response = requests.post(API_URL_RECOGNITION, headers=headers, data=data)
                         if response.status_code != 200:
@@ -202,7 +346,9 @@ try:
                             st.text(response.text)
                             text = "Speech recognition failed"
                         else:
-                            text = response.json().get("text", "Speech recognition failed")
+                            result_json = response.json()
+                            logger.debug(f"API response: {result_json}")
+                            text = result_json.get("text", "Speech recognition failed")
                         
                         st.write(f"🗣 You said: `{text}`")
                         
@@ -226,10 +372,53 @@ try:
                         st.session_state.history.append({"message": result, "is_user": False})
                     else:
                         st.warning("⚠️ Failed to save audio.")
+                        # Let's examine what went wrong by checking the frames
+                        if len(st.session_state.audio_frames) > 0:
+                            num_frames = len(st.session_state.audio_frames)
+                            audio_stats = {
+                                "count": num_frames,
+                                "shapes": [str(f.shape) for f in st.session_state.audio_frames[:3]],
+                                "means": [float(np.mean(f)) for f in st.session_state.audio_frames[:3]],
+                                "max_values": [float(np.max(f)) for f in st.session_state.audio_frames[:3]]
+                            }
+                            logger.debug(f"Audio stats: {audio_stats}")
+                            st.error(f"""
+                            Audio saving failed despite having {num_frames} frames.
+                            First few frames shapes: {audio_stats['shapes']}
+                            Audio levels: {audio_stats['means']}
+                            """)
+                        else:
+                            st.error("No audio frames were present despite counter indicating otherwise.")
                 else:
                     st.warning("⚠️ No audio captured yet. Try speaking into the mic.")
+                    # Show debug info to help troubleshoot
+                    st.error(f"""
+                    Troubleshooting info:
+                    - WebRTC state: {webrtc_ctx.state if webrtc_ctx.state else 'Not initialized'}
+                    - Frame counter: {st.session_state.frame_counter}
+                    - Frames received flag: {st.session_state.frames_received}
+                    
+                    Please try:
+                    1. Refreshing the page
+                    2. Using Chrome browser 
+                    3. Checking your microphone in system settings
+                    4. Trying the Simple Recorder tab
+                    """)
+        
+        # Add a manual reset button
+        if st.button("Reset Audio Capture"):
+            st.session_state.audio_frames = []
+            st.session_state.frame_counter = 0
+            st.session_state.frames_received = False
+            st.session_state.is_recording = False
+            st.success("Audio capture has been reset. Try recording again.")
     
     with tab2:
+        st.subheader("Simple Audio Recorder (Alternative)")
+        st.write("If the WebRTC recorder isn't working, try this simpler recorder:")
+        simple_audio = use_simple_audio_recorder()
+    
+    with tab3:
         st.subheader("Type your symptoms")
         # Text input as alternative
         text_input = st.text_input("Describe your symptoms here:")
@@ -254,6 +443,9 @@ try:
                 
 except Exception as e:
     st.error(f"⚠️ WebRTC error: {str(e)}")
+    logger.error(f"WebRTC error: {str(e)}")
+    import traceback
+    logger.error(traceback.format_exc())
     st.info("Falling back to text input mode")
     
     # Text input as fallback
