@@ -4,6 +4,7 @@ import requests
 import os
 import logging
 import time
+import random
 from dotenv import load_dotenv
 
 # Enhanced logging for better debugging
@@ -72,6 +73,59 @@ if "frames_received" not in st.session_state:
 # Add frame counter session state
 if "frame_counter" not in st.session_state:
     st.session_state.frame_counter = 0
+
+# Add a retry function for API calls
+def call_huggingface_api_with_retry(api_url, headers, data=None, json_data=None, max_retries=3):
+    """Call Hugging Face API with retry logic for handling 503 errors"""
+    retry_count = 0
+    backoff_time = 1  # Start with 1 second backoff
+    
+    while retry_count < max_retries:
+        try:
+            if json_data:
+                response = requests.post(api_url, headers=headers, json=json_data)
+            else:
+                response = requests.post(api_url, headers=headers, data=data)
+            
+            # If success or not a 503 error, return immediately
+            if response.status_code != 503:
+                return response
+            
+            # Log the retry attempt
+            retry_count += 1
+            logger.warning(f"Received 503 error from API. Retry {retry_count}/{max_retries}")
+            
+            if retry_count < max_retries:
+                # Add jitter to backoff time (avoid thundering herd problem)
+                sleep_time = backoff_time + random.uniform(0, 0.5)
+                logger.info(f"Waiting {sleep_time:.2f} seconds before retry...")
+                time.sleep(sleep_time)
+                # Exponential backoff
+                backoff_time *= 2
+            else:
+                logger.error("Max retries reached. API might be unavailable.")
+                return response
+                
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Request error: {str(e)}")
+            retry_count += 1
+            if retry_count < max_retries:
+                time.sleep(backoff_time)
+                backoff_time *= 2
+            else:
+                # Create a custom response to indicate network error
+                class ErrorResponse:
+                    def __init__(self):
+                        self.status_code = 0
+                        self.text = str(e)
+                return ErrorResponse()
+    
+    # This should never be reached, but just in case
+    class FinalErrorResponse:
+        def __init__(self):
+            self.status_code = 500
+            self.text = "Maximum retries exceeded"
+    return FinalErrorResponse()
 
 try:
     # Import WebRTC components
@@ -173,31 +227,36 @@ try:
                     
                     if st.button("Process this recording"):
                         # Call API with the audio data
-                        with st.spinner("Processing audio..."):
-                            response = requests.post(API_URL_RECOGNITION, headers=headers, data=audio_bytes)
+                        with st.spinner("Processing audio... (this may take a moment)"):
+                            response = call_huggingface_api_with_retry(API_URL_RECOGNITION, headers, data=audio_bytes)
                             if response.status_code == 200:
                                 text = response.json().get("text", "Speech recognition failed")
                                 st.success(f"You said: {text}")
                                 
                                 # Diagnosis
-                                response = requests.post(
+                                response = call_huggingface_api_with_retry(
                                     DIAGNOSTIC_MODEL_API, 
-                                    headers=headers, 
-                                    json={"inputs": [text]}
+                                    headers, 
+                                    json_data={"inputs": [text]}
                                 )
                                 
                                 try:
-                                    result = response.json()[0]['generated_text']
-                                    st.success(f"🧠 Diagnosis: {result}")
-                                    
-                                    # Update history
-                                    st.session_state.history.append({"message": text, "is_user": True})
-                                    st.session_state.history.append({"message": result, "is_user": False})
+                                    if response.status_code == 200:
+                                        result = response.json()[0]['generated_text']
+                                        st.success(f"🧠 Diagnosis: {result}")
+                                        
+                                        # Update history
+                                        st.session_state.history.append({"message": text, "is_user": True})
+                                        st.session_state.history.append({"message": result, "is_user": False})
+                                    else:
+                                        st.error(f"Diagnosis API error: {response.status_code}")
+                                        st.error("The Hugging Face service is currently unavailable. Please try again later.")
                                 except Exception as e:
                                     st.error(f"Diagnosis failed: {str(e)}")
                             else:
                                 st.error(f"API error: {response.status_code}")
-                                st.text(response.text)
+                                st.error("The Hugging Face service is currently unavailable. Please try again later.")
+                                st.text(response.text[:500] + "..." if len(response.text) > 500 else response.text)
                 return audio
             except ImportError:
                 # If audiorecorder package is not available
@@ -209,31 +268,39 @@ try:
                     st.audio(uploaded_file)
                     
                     if st.button("Process uploaded audio"):
-                        with st.spinner("Processing audio..."):
-                            response = requests.post(API_URL_RECOGNITION, headers=headers, data=uploaded_file.getvalue())
+                        with st.spinner("Processing audio... (this may take a moment)"):
+                            response = call_huggingface_api_with_retry(API_URL_RECOGNITION, headers, data=uploaded_file.getvalue())
                             if response.status_code == 200:
                                 text = response.json().get("text", "Speech recognition failed")
                                 st.success(f"Recognized text: {text}")
                                 
                                 # Diagnosis
-                                response = requests.post(
+                                response = call_huggingface_api_with_retry(
                                     DIAGNOSTIC_MODEL_API, 
-                                    headers=headers, 
-                                    json={"inputs": [text]}
+                                    headers, 
+                                    json_data={"inputs": [text]}
                                 )
                                 
                                 try:
-                                    result = response.json()[0]['generated_text']
-                                    st.success(f"🧠 Diagnosis: {result}")
-                                    
-                                    # Update history
-                                    st.session_state.history.append({"message": text, "is_user": True})
-                                    st.session_state.history.append({"message": result, "is_user": False})
+                                    if response.status_code == 200:
+                                        result = response.json()[0]['generated_text']
+                                        st.success(f"🧠 Diagnosis: {result}")
+                                        
+                                        # Update history
+                                        st.session_state.history.append({"message": text, "is_user": True})
+                                        st.session_state.history.append({"message": result, "is_user": False})
+                                    else:
+                                        st.error(f"Diagnosis API error: {response.status_code}")
+                                        st.error("The Hugging Face service is currently unavailable. Please try again later.")
+                                        st.info("Response details:")
+                                        st.code(response.text[:500] + "..." if len(response.text) > 500 else response.text)
                                 except Exception as e:
                                     st.error(f"Diagnosis failed: {str(e)}")
                             else:
                                 st.error(f"API error: {response.status_code}")
-                                st.text(response.text)
+                                st.error("The Hugging Face service is currently unavailable. Please try again later.")
+                                st.info("Response details:")
+                                st.code(response.text[:500] + "..." if len(response.text) > 500 else response.text)
                 
                 return None
                 
@@ -415,29 +482,41 @@ try:
         if uploaded_file is not None:
             st.audio(uploaded_file)
             if st.button("Analyze uploaded audio", key="process_webrtc_upload"):
-                with st.spinner("Processing audio..."):
+                with st.spinner("Processing audio... (this may take a moment)"):
                     try:
-                        response = requests.post(API_URL_RECOGNITION, headers=headers, data=uploaded_file.getvalue())
+                        response = call_huggingface_api_with_retry(
+                            API_URL_RECOGNITION, 
+                            headers, 
+                            data=uploaded_file.getvalue()
+                        )
                         if response.status_code == 200:
                             text = response.json().get("text", "Speech recognition failed")
                             st.success(f"🗣 You said: `{text}`")
                             
                             # Diagnosis
-                            response = requests.post(
+                            response = call_huggingface_api_with_retry(
                                 DIAGNOSTIC_MODEL_API, 
-                                headers=headers, 
-                                json={"inputs": [text]}
+                                headers, 
+                                json_data={"inputs": [text]}
                             )
                             
-                            result = response.json()[0]['generated_text']
-                            st.success(f"🧠 Diagnosis: {result}")
-                            
-                            # Update history
-                            st.session_state.history.append({"message": text, "is_user": True})
-                            st.session_state.history.append({"message": result, "is_user": False})
+                            if response.status_code == 200:
+                                result = response.json()[0]['generated_text']
+                                st.success(f"🧠 Diagnosis: {result}")
+                                
+                                # Update history
+                                st.session_state.history.append({"message": text, "is_user": True})
+                                st.session_state.history.append({"message": result, "is_user": False})
+                            else:
+                                st.error(f"Diagnosis API error: {response.status_code}")
+                                st.error("The Hugging Face service is currently unavailable. Please try again later.")
+                                st.info("Response details:")
+                                st.code(response.text[:500] + "..." if len(response.text) > 500 else response.text)
                         else:
-                            st.error(f"API error: {response.status_code}")
-                            st.text(response.text)
+                            st.error(f"Speech recognition API error: {response.status_code}")
+                            st.error("The Hugging Face service is currently unavailable. Please try again later.")
+                            st.info("Response details:")
+                            st.code(response.text[:500] + "..." if len(response.text) > 500 else response.text)
                     except Exception as e:
                         st.error(f"Error processing audio: {str(e)}")
         
@@ -468,10 +547,12 @@ try:
                         if file_size < 1.0:
                             st.warning(f"Audio file very small ({file_size:.2f} KB), may contain no speech")
                         
-                        response = requests.post(API_URL_RECOGNITION, headers=headers, data=data)
+                        response = call_huggingface_api_with_retry(API_URL_RECOGNITION, headers, data=data)
                         if response.status_code != 200:
                             st.error(f"API error: {response.status_code}")
-                            st.text(response.text)
+                            st.error("The Hugging Face service is currently unavailable. Please try again later.")
+                            st.info("Response details:")
+                            st.code(response.text[:500] + "..." if len(response.text) > 500 else response.text)
                             text = "Speech recognition failed"
                         else:
                             result_json = response.json()
@@ -481,14 +562,21 @@ try:
                         st.write(f"🗣 You said: `{text}`")
                         
                         # Diagnosis
-                        response = requests.post(
+                        response = call_huggingface_api_with_retry(
                             DIAGNOSTIC_MODEL_API, 
-                            headers=headers, 
-                            json={"inputs": [text]}
+                            headers, 
+                            json_data={"inputs": [text]}
                         )
                         
                         try:
-                            result = response.json()[0]['generated_text']
+                            if response.status_code == 200:
+                                result = response.json()[0]['generated_text']
+                            else:
+                                st.error(f"Diagnosis API error: {response.status_code}")
+                                st.error("The Hugging Face service is currently unavailable. Please try again later.")
+                                st.info("Response details:")
+                                st.code(response.text[:500] + "..." if len(response.text) > 500 else response.text)
+                                result = "Diagnosis failed due to service unavailability."
                         except Exception as e:
                             logger.error(f"Error in diagnosis: {str(e)}")
                             result = "Diagnosis failed."
@@ -553,10 +641,10 @@ try:
         
         if text_input and st.button("Analyze Text"):
             with st.spinner("Processing..."):
-                response = requests.post(
+                response = call_huggingface_api_with_retry(
                     DIAGNOSTIC_MODEL_API, 
-                    headers=headers, 
-                    json={"inputs": [text_input]}
+                    headers, 
+                    json_data={"inputs": [text_input]}
                 )
                 
                 try:
@@ -581,10 +669,10 @@ except Exception as e:
     
     if text_input and st.button("Analyze Text"):
         with st.spinner("Processing..."):
-            response = requests.post(
+            response = call_huggingface_api_with_retry(
                 DIAGNOSTIC_MODEL_API, 
-                headers=headers, 
-                json={"inputs": [text_input]}
+                headers, 
+                json_data={"inputs": [text_input]}
             )
             
             try:
