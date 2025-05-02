@@ -33,6 +33,10 @@ if not api_key:
 
 st.title("🩺 Voice-Based Medical Diagnosis")
 
+# Display deployment mode information
+st.sidebar.info("Running on Streamlit Cloud")
+st.sidebar.warning("Note: WebRTC may have limited support on some cloud platforms. If voice recognition doesn't work, try the Simple Recorder or text input.")
+
 # Browser check warning
 import platform
 user_agent = st.experimental_get_query_params().get('user_agent', [''])[0]
@@ -332,7 +336,21 @@ try:
                 <div id="mic-status">Testing microphone access...</div>
                 """, height=100)
         
-        # Define the WebRTC streamer with simpler configuration first
+        # Enhanced WebRTC configuration for cloud deployment
+        # Use more comprehensive STUN/TURN servers for better NAT traversal
+        rtc_configuration = RTCConfiguration(
+            {
+                "iceServers": [
+                    {"urls": ["stun:stun.l.google.com:19302"]},
+                    {"urls": ["stun:stun1.l.google.com:19302"]},
+                    {"urls": ["stun:stun2.l.google.com:19302"]},
+                    {"urls": ["stun:stun3.l.google.com:19302"]},
+                    {"urls": ["stun:stun4.l.google.com:19302"]},
+                ]
+            }
+        )
+        
+        # Define the WebRTC streamer with cloud-optimized configuration
         webrtc_ctx = webrtc_streamer(
             key="audio_only",
             mode=WebRtcMode.SENDONLY,
@@ -342,9 +360,7 @@ try:
                 "video": False
             },
             audio_processor_factory=AudioProcessor,
-            rtc_configuration=RTCConfiguration(
-                {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
-            ),
+            rtc_configuration=rtc_configuration,
             async_processing=True,
         )
         
@@ -391,6 +407,39 @@ try:
                 """)
             else:
                 status_placeholder.info("Click START to begin recording")
+        
+        # Add a manual file uploader as an alternative
+        st.markdown("---")
+        st.markdown("### Or upload audio directly")
+        uploaded_file = st.file_uploader("Upload audio file (WAV format)", type=["wav"], key="webrtc_upload")
+        if uploaded_file is not None:
+            st.audio(uploaded_file)
+            if st.button("Analyze uploaded audio", key="process_webrtc_upload"):
+                with st.spinner("Processing audio..."):
+                    try:
+                        response = requests.post(API_URL_RECOGNITION, headers=headers, data=uploaded_file.getvalue())
+                        if response.status_code == 200:
+                            text = response.json().get("text", "Speech recognition failed")
+                            st.success(f"🗣 You said: `{text}`")
+                            
+                            # Diagnosis
+                            response = requests.post(
+                                DIAGNOSTIC_MODEL_API, 
+                                headers=headers, 
+                                json={"inputs": [text]}
+                            )
+                            
+                            result = response.json()[0]['generated_text']
+                            st.success(f"🧠 Diagnosis: {result}")
+                            
+                            # Update history
+                            st.session_state.history.append({"message": text, "is_user": True})
+                            st.session_state.history.append({"message": result, "is_user": False})
+                        else:
+                            st.error(f"API error: {response.status_code}")
+                            st.text(response.text)
+                    except Exception as e:
+                        st.error(f"Error processing audio: {str(e)}")
         
         # Process audio when user clicks Analyze
         if st.button("📝 ANALYZE", key="webrtc_analyze"):
