@@ -404,7 +404,8 @@ try:
                 """, height=100)
         
         # Enhanced WebRTC configuration for cloud deployment
-        # Use more comprehensive STUN/TURN servers for better NAT traversal
+        # Use comprehensive STUN/TURN servers for better NAT traversal
+        # Include public TURN servers to help with restrictive networks
         rtc_configuration = RTCConfiguration(
             {
                 "iceServers": [
@@ -413,7 +414,15 @@ try:
                     {"urls": ["stun:stun2.l.google.com:19302"]},
                     {"urls": ["stun:stun3.l.google.com:19302"]},
                     {"urls": ["stun:stun4.l.google.com:19302"]},
-                ]
+                    # Add public TURN servers that don't require credentials
+                    {"urls": ["turn:openrelay.metered.ca:80"], "username": "openrelayproject", "credential": "openrelayproject"},
+                    {"urls": ["turn:openrelay.metered.ca:443"], "username": "openrelayproject", "credential": "openrelayproject"},
+                    {"urls": ["turn:openrelay.metered.ca:443?transport=tcp"], "username": "openrelayproject", "credential": "openrelayproject"},
+                ],
+                "iceTransportPolicy": "all",
+                "bundlePolicy": "max-bundle",
+                "rtcpMuxPolicy": "require",
+                "sdpSemantics": "unified-plan"
             }
         )
         
@@ -423,7 +432,11 @@ try:
             mode=WebRtcMode.SENDONLY,
             audio_receiver_size=1024,
             media_stream_constraints={
-                "audio": True,  # Simplified to basic audio
+                "audio": {
+                    "echoCancellation": {"ideal": True},
+                    "noiseSuppression": {"ideal": True},
+                    "autoGainControl": {"ideal": True}
+                },
                 "video": False
             },
             audio_processor_factory=AudioProcessor,
