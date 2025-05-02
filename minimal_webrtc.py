@@ -22,22 +22,114 @@ st.set_page_config(
 API_URL_RECOGNITION = "https://api-inference.huggingface.co/models/jonatasgrosman/wav2vec2-large-xlsr-53-english"
 DIAGNOSTIC_MODEL_API = "https://api-inference.huggingface.co/models/shanover/medbot_godel_v3"
 
-# Get API key from Streamlit secrets
-api_key = st.secrets.get("HUGGINGFACE_API_KEY", None)
+# Multiple ways to get API key
+api_key = None
 
-# Fallback to environment variables if not in secrets
+# Try different methods to get the API key
+try:
+    # 1. Try from Streamlit secrets
+    api_key = st.secrets.get("HUGGINGFACE_API_KEY", None)
+    if api_key:
+        logger.info("API key loaded from Streamlit secrets")
+except Exception as e:
+    logger.warning(f"Could not load from Streamlit secrets: {e}")
+
+# 2. Try from environment variables if not in secrets
 if not api_key:
-    # Load environment variables as fallback
+    # Load from .env file
     load_dotenv()
     api_key = os.getenv('HUGGINGFACE_API_KEY')
+    if api_key:
+        logger.info("API key loaded from environment variables")
 
-headers = {"Authorization": f"Bearer {api_key}"}
+# Create headers with API key if available
+if api_key:
+    headers = {"Authorization": f"Bearer {api_key}"}
+    logger.info("API key configured successfully")
+else:
+    headers = {}
+    logger.warning("No API key found, proceeding without authentication")
 
-# Check for API key
+# Add an API key configuration in the sidebar instead of stopping the app
+st.sidebar.markdown("---")
+st.sidebar.subheader("API Configuration")
+
+# Option to enter API key in the UI
+use_api_key_input = not api_key or st.sidebar.checkbox("Override API key", value=False)
+
+if use_api_key_input:
+    input_api_key = st.sidebar.text_input(
+        "Enter Hugging Face API Key",
+        type="password",
+        help="Your API key for Hugging Face. Get one at https://huggingface.co/settings/tokens"
+    )
+    
+    if input_api_key:
+        api_key = input_api_key
+        headers = {"Authorization": f"Bearer {api_key}"}
+        st.sidebar.success("✅ API key updated")
+    else:
+        st.sidebar.warning("⚠️ No API key provided")
+
+# API key status check
 if not api_key:
-    st.error("⚠️ Please set your HUGGINGFACE_API_KEY in the Streamlit Cloud secrets.")
-    st.info("You can add it to `.streamlit/secrets.toml` with: HUGGINGFACE_API_KEY = 'your-key-here'")
-    st.stop()
+    st.warning("""
+    ⚠️ No Hugging Face API key found. You have three options:
+    
+    1. Enter your API key in the sidebar
+    2. Add it to your environment variables as HUGGINGFACE_API_KEY=your-key
+    3. Add it to .streamlit/secrets.toml as HUGGINGFACE_API_KEY="your-key"
+    
+    The app will try to function without a key, but many features may not work.
+    """)
+
+# Add a special flag for EC2 that enables demo mode (mockup responses) if no API key
+running_on_ec2 = os.path.exists('/sys/hypervisor/uuid') or os.path.exists('/sys/devices/virtual/dmi/id/product_uuid')
+if running_on_ec2 and not api_key:
+    st.info("🖥️ Detected running on EC2. Enabling demo mode since no API key is available.")
+    use_offline_mode = True
+else:
+    use_offline_mode = st.sidebar.checkbox(
+        "Enable offline/mock mode", 
+        value=not api_key,  # Default to offline mode if no API key
+        help="Enable this if Hugging Face APIs are down or you don't have an API key. This will use mock responses instead."
+    )
+
+if use_offline_mode:
+    st.sidebar.warning("⚠️ Offline mode enabled - using mock responses for demo purposes")
+    
+    # Override the API call function to return mock responses
+    def call_huggingface_api_with_retry(api_url, headers, data=None, json_data=None, max_retries=5):
+        """Mock version that returns fake successful responses"""
+        time.sleep(1)  # Simulate API delay
+        
+        if API_URL_RECOGNITION in api_url:
+            # Speech recognition mock
+            class MockResponse:
+                def __init__(self):
+                    self.status_code = 200
+                    self._json = {"text": "I have been having a persistent cough and fever for the past three days."}
+                def json(self):
+                    return self._json
+            return MockResponse()
+        elif DIAGNOSTIC_MODEL_API in api_url:
+            # Diagnosis mock
+            class MockResponse:
+                def __init__(self):
+                    self.status_code = 200
+                    self._json = [{"generated_text": "Based on your symptoms of persistent cough and fever for three days, you may have a respiratory infection. It could be a viral infection like a cold or flu, or possibly COVID-19. I recommend rest, fluids, and over-the-counter fever reducers. Please consult a healthcare provider if symptoms worsen or you develop difficulty breathing."}]
+                def json(self):
+                    return self._json
+            return MockResponse()
+        else:
+            # Default mock
+            class MockResponse:
+                def __init__(self):
+                    self.status_code = 200
+                    self._json = {"result": "mock response"}
+                def json(self):
+                    return self._json
+            return MockResponse()
 
 st.title("🩺 Voice-Based Medical Diagnosis")
 
