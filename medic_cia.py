@@ -115,14 +115,14 @@ def call_huggingface_api_with_retry(api_url, headers, data=None, json_data=None,
             else:
                 # Create a custom response to indicate network error
                 class ErrorResponse:
-                    def _init_(self):
+                    def __init__(self):
                         self.status_code = 0
                         self.text = str(e)
                 return ErrorResponse()
     
     # This should never be reached, but just in case
     class FinalErrorResponse:
-        def _init_(self):
+        def __init__(self):
             self.status_code = 500
             self.text = "Maximum retries exceeded"
     return FinalErrorResponse()
@@ -139,7 +139,7 @@ try:
     
     # Audio processor class - improved for better audio capturing and debugging
     class AudioProcessor(AudioProcessorBase):
-        def _init_(self):
+        def __init__(self):
             self.frames = []
             logger.info("AudioProcessor initialized")
             # Clear session state frames at initialization
@@ -689,3 +689,4 @@ except Exception as e:
 st.subheader("Consultation History")
 for chat in st.session_state.history:
     st.write(f"{'👤' if chat['is_user'] else '🤖'}: {chat['message']}")
+    
