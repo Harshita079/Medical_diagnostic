@@ -1,4 +1,4 @@
-<<<<<<< HEAD
+
 streamlit==1.38.0
 streamlit-webrtc==0.48.1
 av==10.0.0
@@ -7,7 +7,6 @@ requests==2.31.0
 python-dotenv==1.0.0
 aiortc>=1.9.0,<2.0.0
 audiorecorder==0.1
-=======
 streamlit==1.38.0
 streamlit-webrtc==0.48.1
 av==10.0.0
@@ -16,4 +15,4 @@ requests==2.31.0
 python-dotenv==1.0.0
 aiortc>=1.9.0,<2.0.0
 audiorecorder==0.1
->>>>>>> 58d6602 (Your commit message)
+
