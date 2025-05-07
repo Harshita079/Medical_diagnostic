@@ -23,7 +23,15 @@ st.set_page_config(
 
 # Hugging Face API settings
 API_URL_RECOGNITION = "https://api-inference.huggingface.co/models/jonatasgrosman/wav2vec2-large-xlsr-53-english"
-DIAGNOSTIC_MODEL_API = "https://api-inference.huggingface.co/models/shanover/medbot_godel_v3"
+
+# Primary and fallback medical diagnosis models
+DIAGNOSTIC_MODELS = [
+    "https://api-inference.huggingface.co/models/shanover/medbot_godel_v3",  # Primary model
+    "https://api-inference.huggingface.co/models/medalpaca/medalpaca-7b",    # Fallback option 1
+    "https://api-inference.huggingface.co/models/epfl-llm/meditron-7b"       # Fallback option 2
+]
+DIAGNOSTIC_MODEL_API = DIAGNOSTIC_MODELS[0]  # Start with the primary model
+
 api_key = os.getenv('HUGGINGFACE_API_KEY')
 headers = {"Authorization": f"Bearer {api_key}"}
 
@@ -92,17 +100,39 @@ def call_huggingface_api_with_retry(api_url, headers, data=None, json_data=None,
             self.text = "Maximum retries exceeded"
     return FinalErrorResponse()
 
+# Function to try different models until one works
+def try_diagnosis_models(input_text):
+    """Try multiple diagnosis models in sequence until one works"""
+    for model_url in DIAGNOSTIC_MODELS:
+        model_name = model_url.split('/')[-1]
+        logger.info(f"Trying diagnosis model: {model_url}")
+        
+        formatted_input = f"I am feeling {input_text}"
+        
+        response = call_huggingface_api_with_retry(
+            model_url, 
+            headers, 
+            json_data={"inputs": formatted_input}
+        )
+        
+        # If the response is successful, return it along with the model name
+        if response.status_code == 200:
+            return response, model_name
+        
+        # Log the failed attempt
+        logger.warning(f"Model {model_url} returned status code {response.status_code}")
+    
+    # If all models fail, return the last response and None for model_name
+    return response, None
+
 # Process diagnosis helper function
 def process_diagnosis(text, is_text_input=False):
     """Process diagnosis for given text and handle API response appropriately"""
     # Use text_input parameter name if this was called from text input field
     input_text = text
     
-    response = call_huggingface_api_with_retry(
-        DIAGNOSTIC_MODEL_API, 
-        headers, 
-        json_data={"inputs": [input_text]}
-    )
+    # Try multiple models until one works
+    response, model_name = try_diagnosis_models(input_text)
     
     try:
         # First check if response has valid status code
@@ -110,20 +140,29 @@ def process_diagnosis(text, is_text_input=False):
             # Check if response content is valid JSON
             try:
                 result_json = response.json()
-                if result_json and isinstance(result_json, list) and len(result_json) > 0:
+                # Handle different response formats from different models
+                if isinstance(result_json, list) and len(result_json) > 0:
                     result = result_json[0]['generated_text']
-                    st.success(f"🧠 Diagnosis: {result}")
-                    
-                    # Update history
-                    st.session_state.history.append({"message": input_text, "is_user": True})
-                    st.session_state.history.append({"message": result, "is_user": False})
-                    return True, result
+                    st.success(f"🧠 Diagnosis (via {model_name}): {result}")
+                elif isinstance(result_json, dict) and 'generated_text' in result_json:
+                    result = result_json['generated_text']
+                    st.success(f"🧠 Diagnosis (via {model_name}): {result}")
                 else:
-                    st.error("Invalid response format from the diagnosis model")
-                    logger.error(f"Invalid response format: {result_json}")
-                    st.info("Response details:")
-                    st.code(str(result_json)[:500])
-                    return False, None
+                    # Try to handle other possible response formats
+                    if isinstance(result_json, str):
+                        result = result_json
+                        st.success(f"🧠 Diagnosis (via {model_name}): {result}")
+                    else:
+                        st.error("Invalid response format from the diagnosis model")
+                        logger.error(f"Invalid response format: {result_json}")
+                        st.info("Response details:")
+                        st.code(str(result_json)[:500])
+                        return False, None
+                
+                # Update history
+                st.session_state.history.append({"message": input_text, "is_user": True})
+                st.session_state.history.append({"message": result, "is_user": False})
+                return True, result
             except ValueError as json_err:
                 st.error(f"Failed to parse API response: {str(json_err)}")
                 logger.error(f"JSON parsing error: {str(json_err)}, Response: {response.text[:100]}")
@@ -131,7 +170,7 @@ def process_diagnosis(text, is_text_input=False):
                 st.code(response.text[:500])
                 return False, None
         else:
-            st.error(f"Diagnosis API error: {response.status_code}")
+            st.error(f"All diagnosis models failed with errors")
             st.error("The Hugging Face service is currently unavailable. Please try again later.")
             st.info("Response details:")
             st.code(response.text[:500] if hasattr(response, 'text') else "No response text available")
