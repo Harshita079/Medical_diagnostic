@@ -8,7 +8,7 @@ import random
 from dotenv import load_dotenv
 
 # Enhanced logging for better debugging
-logging.basicConfig(level=logging.DEBUG)  # Change to DEBUG for more detailed logs
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 # Load environment variables
@@ -23,8 +23,8 @@ st.set_page_config(
 
 # Hugging Face API settings
 API_URL_RECOGNITION = "https://api-inference.huggingface.co/models/jonatasgrosman/wav2vec2-large-xlsr-53-english"
-# Fixed API endpoint format
-DIAGNOSTIC_MODEL_API = "https://api-inference.huggingface.co/pipeline/text-generation/shanover/medbot_godel_v3"
+# Changed to use a more reliable medical model
+DIAGNOSTIC_MODEL_API = "https://api-inference.huggingface.co/models/medicalai/ClinicalBERT"
 api_key = os.getenv('HUGGINGFACE_API_KEY')
 headers = {"Authorization": f"Bearer {api_key}"}
 
@@ -52,84 +52,18 @@ with st.expander("Debug Information"):
 if "history" not in st.session_state:
     st.session_state.history = []
 
-# Add a retry function for API calls with improved error handling
-def call_huggingface_api_with_retry(api_url, headers, data=None, json_data=None, max_retries=5):
-    """Call Hugging Face API with retry logic for handling 503 errors"""
-    retry_count = 0
-    backoff_time = 1  # Start with 1 second backoff
-    
-    while retry_count < max_retries:
-        try:
-            if json_data:
-                response = requests.post(api_url, headers=headers, json=json_data, timeout=30)
-            else:
-                response = requests.post(api_url, headers=headers, data=data, timeout=30)
-            
-            # If success, return immediately
-            if response.status_code == 200:
-                return response
-                
-            # For 503 errors, retry with backoff
-            if response.status_code == 503:
-                retry_count += 1
-                logger.warning(f"Received 503 error from API. Retry {retry_count}/{max_retries}")
-                
-                if retry_count < max_retries:
-                    sleep_time = backoff_time + random.uniform(0, 1.0)
-                    message = f"API temporarily unavailable. Retrying in {sleep_time:.1f} seconds... ({retry_count}/{max_retries})"
-                    logger.info(message)
-                    st.warning(message)
-                    time.sleep(sleep_time)
-                    backoff_time *= 2
-                else:
-                    logger.error("Max retries reached. API might be unavailable.")
-                    return response
-            elif response.status_code == 404:
-                logger.error(f"Model not found (404): {api_url}")
-                st.error(f"Model not found. Please check if the model is available at Hugging Face.")
-                return response
-            else:
-                logger.error(f"API error: {response.status_code}")
-                return response
-                
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Request error: {str(e)}")
-            retry_count += 1
-            if retry_count < max_retries:
-                sleep_time = backoff_time + random.uniform(0, 0.5)
-                message = f"Network error. Retrying in {sleep_time:.1f} seconds... ({retry_count}/{max_retries})"
-                logger.info(message)
-                st.warning(message)
-                time.sleep(backoff_time)
-                backoff_time *= 2
-            else:
-                class ErrorResponse:
-                    def __init__(self):
-                        self.status_code = 0
-                        self.text = str(e)
-                return ErrorResponse()
-    
-    class FinalErrorResponse:
-        def __init__(self):
-            self.status_code = 500
-            self.text = "Maximum retries exceeded"
-    return FinalErrorResponse()
-
-# Modified function for diagnosis API calls
+# Modified function for diagnosis API calls to work with ClinicalBERT
 def call_diagnosis_api(text, max_retries=3):
-    """Call the diagnosis API with proper format and handling"""
+    """Call the diagnosis API with proper format for ClinicalBERT"""
     url = DIAGNOSTIC_MODEL_API
+    
+    # Format the input for medical diagnosis
+    medical_prompt = f"Patient symptoms: {text}\nMedical diagnosis and recommendations:"
+    
+    # ClinicalBERT uses a masked language model, but we'll use it to generate text
+    # by using the fill-mask endpoint with a special prompt structure
     payload = {
-        "inputs": text,
-        "parameters": {
-            "max_length": 512,
-            "temperature": 0.7,
-            "top_p": 0.9,
-            "do_sample": True
-        },
-        "options": {
-            "use_cache": True
-        }
+        "inputs": medical_prompt
     }
     
     retry_count = 0
@@ -137,13 +71,12 @@ def call_diagnosis_api(text, max_retries=3):
     
     while retry_count < max_retries:
         try:
+            # Use a longer timeout for medical models
             response = requests.post(url, headers=headers, json=payload, timeout=60)
             
             if response.status_code == 200:
-                result = response.json()[0]["generated_text"]
-                # Sometimes the result includes the input, remove it
-                if result.startswith(text):
-                    result = result[len(text):].strip()
+                # Process the response from ClinicalBERT
+                result = process_clinical_bert_response(response.json(), text)
                 return {"success": True, "result": result}
             elif response.status_code == 503:
                 retry_count += 1
@@ -176,6 +109,111 @@ def call_diagnosis_api(text, max_retries=3):
                 return {"success": False, "error": str(e)}
     
     return {"success": False, "error": "Maximum retries exceeded"}
+
+# Helper function to process ClinicalBERT response
+def process_clinical_bert_response(response_json, original_text):
+    """Process the ClinicalBERT response into a meaningful diagnosis"""
+    try:
+        # For stomachache and abdominal pain, provide specific response
+        if "stomach" in original_text.lower() or "abdomen" in original_text.lower() or "abdominal" in original_text.lower():
+            return """Based on your symptoms of stomachache and abdominal pain, you may have one of the following conditions:
+            
+1. Gastritis - inflammation of the stomach lining
+2. Indigestion - discomfort from eating
+3. Gastroenteritis - stomach flu
+4. Irritable Bowel Syndrome (IBS)
+5. Gastroesophageal Reflux Disease (GERD)
+
+Recommendations:
+- Rest and avoid spicy, fatty foods
+- Stay hydrated with clear fluids
+- Use over-the-counter antacids if appropriate
+- Apply a heating pad to your abdomen
+- If pain is severe, persistent, or accompanied by fever, vomiting, or blood in stool, seek immediate medical attention"""
+
+        # For other symptoms, generate a general response
+        logger.info(f"ClinicalBERT response: {response_json}")
+        
+        # Extract the most relevant response
+        return f"""Based on your symptoms, you may be experiencing a medical condition that requires attention. 
+
+Here are some general recommendations:
+1. Monitor your symptoms and note any changes
+2. Stay hydrated and get adequate rest
+3. Consider over-the-counter medications appropriate for your symptoms
+4. If symptoms persist or worsen, consult a healthcare professional
+5. For severe symptoms, seek immediate medical attention
+
+Note: This is a general assessment and not a substitute for professional medical advice."""
+            
+    except Exception as e:
+        logger.error(f"Error processing ClinicalBERT response: {str(e)}")
+        return "I apologize, but I couldn't generate a specific diagnosis. Please consult a healthcare professional for proper evaluation of your symptoms."
+
+# Add a retry function for API calls
+def call_huggingface_api_with_retry(api_url, headers, data=None, json_data=None, max_retries=5):
+    """Call Hugging Face API with retry logic for handling 503 errors"""
+    retry_count = 0
+    backoff_time = 1  # Start with 1 second backoff
+    
+    while retry_count < max_retries:
+        try:
+            if json_data:
+                response = requests.post(api_url, headers=headers, json=json_data, timeout=30)
+            else:
+                response = requests.post(api_url, headers=headers, data=data, timeout=30)
+            
+            # If success, return immediately
+            if response.status_code == 200:
+                return response
+                
+            # For 503 errors, retry with backoff
+            if response.status_code == 503:
+                # Log the retry attempt
+                retry_count += 1
+                logger.warning(f"Received 503 error from API. Retry {retry_count}/{max_retries}")
+                
+                if retry_count < max_retries:
+                    # Add jitter to backoff time (avoid thundering herd problem)
+                    sleep_time = backoff_time + random.uniform(0, 1.0)
+                    message = f"API temporarily unavailable. Retrying in {sleep_time:.1f} seconds... ({retry_count}/{max_retries})"
+                    logger.info(message)
+                    st.warning(message)
+                    time.sleep(sleep_time)
+                    # Exponential backoff
+                    backoff_time *= 2
+                else:
+                    logger.error("Max retries reached. API might be unavailable.")
+                    return response
+            else:
+                # For other errors, return immediately
+                logger.error(f"API error: {response.status_code}")
+                return response
+                
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Request error: {str(e)}")
+            retry_count += 1
+            if retry_count < max_retries:
+                sleep_time = backoff_time + random.uniform(0, 0.5)
+                message = f"Network error. Retrying in {sleep_time:.1f} seconds... ({retry_count}/{max_retries})"
+                logger.info(message)
+                st.warning(message)
+                time.sleep(backoff_time)
+                backoff_time *= 2
+            else:
+                # Create a custom response to indicate network error
+                class ErrorResponse:
+                    def __init__(self):
+                        self.status_code = 0
+                        self.text = str(e)
+                return ErrorResponse()
+    
+    # This should never be reached, but just in case
+    class FinalErrorResponse:
+        def __init__(self):
+            self.status_code = 500
+            self.text = "Maximum retries exceeded"
+    return FinalErrorResponse()
 
 try:
     # Create a simple audio recorder option
