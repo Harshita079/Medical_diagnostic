@@ -500,18 +500,39 @@ try:
                                 json_data={"inputs": [text]}
                             )
                             
-                            if response.status_code == 200:
-                                result = response.json()[0]['generated_text']
-                                st.success(f"🧠 Diagnosis: {result}")
-                                
-                                # Update history
-                                st.session_state.history.append({"message": text, "is_user": True})
-                                st.session_state.history.append({"message": result, "is_user": False})
-                            else:
-                                st.error(f"Diagnosis API error: {response.status_code}")
-                                st.error("The Hugging Face service is currently unavailable. Please try again later.")
-                                st.info("Response details:")
-                                st.code(response.text[:500] + "..." if len(response.text) > 500 else response.text)
+                            try:
+                                if response.status_code == 200:
+                                    try:
+                                        result_json = response.json()
+                                        if result_json and isinstance(result_json, list) and len(result_json) > 0:
+                                            result = result_json[0]['generated_text']
+                                        else:
+                                            st.error("Invalid response format from the diagnosis model")
+                                            logger.error(f"Invalid response format: {result_json}")
+                                            st.info("Response details:")
+                                            st.code(str(result_json)[:500])
+                                            result = "Diagnosis failed due to invalid API response format."
+                                    except ValueError as json_err:
+                                        st.error(f"Failed to parse API response: {str(json_err)}")
+                                        logger.error(f"JSON parsing error: {str(json_err)}, Response: {response.text[:100]}")
+                                        st.info("Response details:")
+                                        st.code(response.text[:500])
+                                        result = "Diagnosis failed due to invalid API response."
+                                else:
+                                    st.error(f"Diagnosis API error: {response.status_code}")
+                                    st.error("The Hugging Face service is currently unavailable. Please try again later.")
+                                    st.info("Response details:")
+                                    st.code(response.text[:500] if hasattr(response, 'text') else "No response text available")
+                                    result = "Diagnosis failed due to service unavailability."
+                            except Exception as e:
+                                logger.error(f"Error in diagnosis: {str(e)}")
+                                result = "Diagnosis failed."
+                            
+                            st.success(f"🧠 Diagnosis: {result}")
+                            
+                            # Update history
+                            st.session_state.history.append({"message": text, "is_user": True})
+                            st.session_state.history.append({"message": result, "is_user": False})
                         else:
                             st.error(f"Speech recognition API error: {response.status_code}")
                             st.error("The Hugging Face service is currently unavailable. Please try again later.")
@@ -570,12 +591,27 @@ try:
                         
                         try:
                             if response.status_code == 200:
-                                result = response.json()[0]['generated_text']
+                                try:
+                                    result_json = response.json()
+                                    if result_json and isinstance(result_json, list) and len(result_json) > 0:
+                                        result = result_json[0]['generated_text']
+                                    else:
+                                        st.error("Invalid response format from the diagnosis model")
+                                        logger.error(f"Invalid response format: {result_json}")
+                                        st.info("Response details:")
+                                        st.code(str(result_json)[:500])
+                                        result = "Diagnosis failed due to invalid API response format."
+                                except ValueError as json_err:
+                                    st.error(f"Failed to parse API response: {str(json_err)}")
+                                    logger.error(f"JSON parsing error: {str(json_err)}, Response: {response.text[:100]}")
+                                    st.info("Response details:")
+                                    st.code(response.text[:500])
+                                    result = "Diagnosis failed due to invalid API response."
                             else:
                                 st.error(f"Diagnosis API error: {response.status_code}")
                                 st.error("The Hugging Face service is currently unavailable. Please try again later.")
                                 st.info("Response details:")
-                                st.code(response.text[:500] + "..." if len(response.text) > 500 else response.text)
+                                st.code(response.text[:500] if hasattr(response, 'text') else "No response text available")
                                 result = "Diagnosis failed due to service unavailability."
                         except Exception as e:
                             logger.error(f"Error in diagnosis: {str(e)}")
@@ -648,14 +684,36 @@ try:
                 )
                 
                 try:
-                    result = response.json()[0]['generated_text']
-                    st.success(f"🧠 Diagnosis: {result}")
-                    
-                    # Update history
-                    st.session_state.history.append({"message": text_input, "is_user": True})
-                    st.session_state.history.append({"message": result, "is_user": False})
+                    # First check if response has valid status code
+                    if response.status_code == 200:
+                        # Check if response content is valid JSON
+                        try:
+                            result_json = response.json()
+                            if result_json and isinstance(result_json, list) and len(result_json) > 0:
+                                result = result_json[0]['generated_text']
+                                st.success(f"🧠 Diagnosis: {result}")
+                                
+                                # Update history
+                                st.session_state.history.append({"message": text_input, "is_user": True})
+                                st.session_state.history.append({"message": result, "is_user": False})
+                            else:
+                                st.error("Invalid response format from the diagnosis model")
+                                logger.error(f"Invalid response format: {result_json}")
+                                st.info("Response details:")
+                                st.code(str(result_json)[:500])
+                        except ValueError as json_err:
+                            st.error(f"Failed to parse API response: {str(json_err)}")
+                            logger.error(f"JSON parsing error: {str(json_err)}, Response: {response.text[:100]}")
+                            st.info("Response details:")
+                            st.code(response.text[:500])
+                    else:
+                        st.error(f"Diagnosis API error: {response.status_code}")
+                        st.error("The Hugging Face service is currently unavailable. Please try again later.")
+                        st.info("Response details:")
+                        st.code(response.text[:500] if hasattr(response, 'text') else "No response text available")
                 except Exception as e:
                     st.error(f"Diagnosis failed: {str(e)}")
+                    logger.error(f"General error in diagnosis processing: {str(e)}")
                 
 except Exception as e:
     st.error(f"⚠ WebRTC error: {str(e)}")
@@ -676,14 +734,36 @@ except Exception as e:
             )
             
             try:
-                result = response.json()[0]['generated_text']
-                st.success(f"🧠 Diagnosis: {result}")
-                
-                # Update history
-                st.session_state.history.append({"message": text_input, "is_user": True})
-                st.session_state.history.append({"message": result, "is_user": False})
+                # First check if response has valid status code
+                if response.status_code == 200:
+                    # Check if response content is valid JSON
+                    try:
+                        result_json = response.json()
+                        if result_json and isinstance(result_json, list) and len(result_json) > 0:
+                            result = result_json[0]['generated_text']
+                            st.success(f"🧠 Diagnosis: {result}")
+                            
+                            # Update history
+                            st.session_state.history.append({"message": text_input, "is_user": True})
+                            st.session_state.history.append({"message": result, "is_user": False})
+                        else:
+                            st.error("Invalid response format from the diagnosis model")
+                            logger.error(f"Invalid response format: {result_json}")
+                            st.info("Response details:")
+                            st.code(str(result_json)[:500])
+                    except ValueError as json_err:
+                        st.error(f"Failed to parse API response: {str(json_err)}")
+                        logger.error(f"JSON parsing error: {str(json_err)}, Response: {response.text[:100]}")
+                        st.info("Response details:")
+                        st.code(response.text[:500])
+                else:
+                    st.error(f"Diagnosis API error: {response.status_code}")
+                    st.error("The Hugging Face service is currently unavailable. Please try again later.")
+                    st.info("Response details:")
+                    st.code(response.text[:500] if hasattr(response, 'text') else "No response text available")
             except Exception as e:
                 st.error(f"Diagnosis failed: {str(e)}")
+                logger.error(f"General error in diagnosis processing: {str(e)}")
 
 # Display chat history
 st.subheader("Consultation History")
