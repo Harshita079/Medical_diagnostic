@@ -9,7 +9,8 @@ from dotenv import load_dotenv
 
 # Enhanced logging for better debugging
 logging.basicConfig(level=logging.DEBUG)  # Change to DEBUG for more detailed logs
-logger = logging.getLogger(_name_)
+logger = logging.getLogger(__name__)
+
 
 # Load environment variables
 load_dotenv()
