@@ -27,13 +27,11 @@ DIAGNOSTIC_MODEL_API = "https://api-inference.huggingface.co/models/shanover/med
 
 
 # Attempt to get API key from secrets or environment variables
-try:
-    api_key = st.secrets["HUGGINGFACE_API_KEY"]
-except Exception as e:
-    # Fallback to environment variable
-    api_key = os.getenv('HUGGINGFACE_API_KEY')
-    if not api_key:
-        st.error("⚠️ HUGGINGFACE_API_KEY not found in secrets or environment variables.")
+
+api_key = st.secrets.get("HUGGINGFACE_API_KEY")
+if not api_key:
+    st.error("⚠️ Hugging Face API key is missing. Please add it in your Secrets.")
+    st.stop()
 
 headers = {"Authorization": f"Bearer {api_key}"}
 
