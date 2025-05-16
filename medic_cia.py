@@ -22,7 +22,9 @@ API_URL_RECOGNITION = "https://api-inference.huggingface.co/models/jonatasgrosma
 
 # Try a more reliable medical model since the original one might be having issues
 # Original: DIAGNOSTIC_MODEL_API = "https://api-inference.huggingface.co/models/shanover/medbot_godel_v3"
-DIAGNOSTIC_MODEL_API = "https://api-inference.huggingface.co/models/m42-health/Llama3-Med42-8B"
+# DIAGNOSTIC_MODEL_API = "https://api-inference.huggingface.co/models/m42-health/Llama3-Med42-8B"
+DIAGNOSTIC_MODEL_API = "https://api-inference.huggingface.co/models/shanover/medbot_godel_v3"
+
 
 # Attempt to get API key from secrets or environment variables
 try:
