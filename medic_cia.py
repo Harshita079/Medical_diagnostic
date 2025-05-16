@@ -33,7 +33,9 @@ if not api_key:
     st.error("⚠️ Hugging Face API key is missing. Please add it in your Secrets.")
     st.stop()
 
+# headers = {"Authorization": f"Bearer {api_key}"}
 headers = {"Authorization": f"Bearer {api_key}"}
+
 
 # Check for API key
 if not api_key:
